@@ -1,0 +1,18 @@
+# Secrets
+.env
+
+# Database
+data/*.db
+data/*.sqlite
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
