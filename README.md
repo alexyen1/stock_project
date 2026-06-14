@@ -61,6 +61,19 @@ sqlite3 data/market_lens.db "SELECT job_name, status, rows_added FROM update_log
 
 Or open `data/market_lens.db` in a free GUI like **DB Browser for SQLite**.
 
+## Run the web app
+
+Once the database is populated (see Setup), launch the Streamlit app:
+
+```bash
+streamlit run app.py
+```
+
+It opens in your browser. Search a ticker or company name in the sidebar, pick a
+result, and the company page shows key metrics plus an interactive Plotly price
+chart (line or candlestick, with selectable date ranges) read straight from the
+local database — no live API calls.
+
 ## Change which stocks are tracked
 
 Edit the `TICKERS` list in `config.py` and re-run. The job is **idempotent** —
@@ -77,7 +90,7 @@ re-running never creates duplicate rows.
 - [x] Week 1: prices + profiles → SQLite
 - [ ] Week 2: financial statements + computed ratios
 - [ ] Week 4: news ingestion + scheduling
-- [ ] Week 5–6: Streamlit app (search → company page → price chart)
+- [x] Week 5–6: Streamlit app (search → company page → price chart)
 - [ ] Later: sentiment, risk scoring, comparison, forecasting
 - [ ] Before deploy: migrate SQLite → PostgreSQL
 
