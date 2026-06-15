@@ -2,21 +2,20 @@
 Market Lens — Week 1 ingestion job.
 
 Fetches daily prices and basic company profiles from yfinance and loads them
-into the local SQLite database. The job is IDEMPOTENT: re-running it never
-creates duplicate rows (a UNIQUE constraint on company_id+date handles dedup).
+into the database (Postgres when DATABASE_URL is set, SQLite otherwise).
+The job is IDEMPOTENT: re-running it never creates duplicate rows.
 
 Run from the project root:
     python -m pipeline.ingest_prices
 """
 import logging
-import sqlite3
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 import yfinance as yf
 
 import config
-from pipeline.db import db_cursor, init_db
+from pipeline.db import adapt_sql, db_cursor, init_db, is_postgres
 
 # --- Logging ---------------------------------------------------------------
 logging.basicConfig(
@@ -35,17 +34,19 @@ def upsert_company(cur, ticker: str) -> int | None:
     """Insert or update a company's profile. Returns its company_id."""
     try:
         info = yf.Ticker(ticker).info or {}
-    except Exception as exc:                       # network / parse issues
+    except Exception as exc:
         log.warning("  profile fetch failed for %s: %s", ticker, exc)
         info = {}
 
     name = info.get("longName") or info.get("shortName") or ticker
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
     cur.execute(
-        """
+        adapt_sql("""
         INSERT INTO companies
             (ticker, name, sector, industry, exchange, country,
              description, market_cap, website, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(ticker) DO UPDATE SET
             name        = excluded.name,
             sector      = excluded.sector,
@@ -55,8 +56,8 @@ def upsert_company(cur, ticker: str) -> int | None:
             description = excluded.description,
             market_cap  = excluded.market_cap,
             website     = excluded.website,
-            updated_at  = datetime('now')
-        """,
+            updated_at  = excluded.updated_at
+        """),
         (
             ticker,
             name,
@@ -67,11 +68,11 @@ def upsert_company(cur, ticker: str) -> int | None:
             info.get("longBusinessSummary"),
             info.get("marketCap"),
             info.get("website"),
+            now,
         ),
     )
-    row = cur.execute(
-        "SELECT company_id FROM companies WHERE ticker = ?", (ticker,)
-    ).fetchone()
+    cur.execute(adapt_sql("SELECT company_id FROM companies WHERE ticker = ?"), (ticker,))
+    row = cur.fetchone()
     return row["company_id"] if row else None
 
 
@@ -97,6 +98,21 @@ def ingest_prices_for(cur, company_id: int, ticker: str) -> tuple[int, int]:
         log.warning("  no price data returned for %s", ticker)
         return 0, 0
 
+    # Build a dialect-correct INSERT that silently skips duplicate days.
+    if is_postgres():
+        insert_sql = """
+            INSERT INTO stock_prices
+                (company_id, date, open, high, low, close, adj_close, volume)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (company_id, date) DO NOTHING
+        """
+    else:
+        insert_sql = """
+            INSERT OR IGNORE INTO stock_prices
+                (company_id, date, open, high, low, close, adj_close, volume)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """
+
     added = skipped = 0
     for idx, r in df.iterrows():
         date_str = idx.strftime("%Y-%m-%d")
@@ -109,13 +125,8 @@ def ingest_prices_for(cur, company_id: int, ticker: str) -> tuple[int, int]:
             skipped += 1
             continue
 
-        # INSERT OR IGNORE makes re-runs safe thanks to the UNIQUE(company_id,date)
         cur.execute(
-            """
-            INSERT OR IGNORE INTO stock_prices
-                (company_id, date, open, high, low, close, adj_close, volume)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+            insert_sql,
             (
                 company_id, date_str,
                 float(o), float(h), float(l), float(c),
@@ -123,7 +134,7 @@ def ingest_prices_for(cur, company_id: int, ticker: str) -> tuple[int, int]:
                 int(v) if v == v and v is not None else None,
             ),
         )
-        if cur.rowcount:        # 1 if inserted, 0 if it already existed
+        if cur.rowcount:        # 1 if inserted, 0 if conflict was skipped
             added += 1
         else:
             skipped += 1
@@ -133,12 +144,12 @@ def ingest_prices_for(cur, company_id: int, ticker: str) -> tuple[int, int]:
 # --- Logging the run -------------------------------------------------------
 def write_log(cur, started, status, added, skipped, error=None):
     cur.execute(
-        """
+        adapt_sql("""
         INSERT INTO update_logs
             (job_name, source, run_started_at, run_finished_at,
              status, rows_added, rows_skipped, error_message)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
+        """),
         (JOB_NAME, SOURCE, started, datetime.now().isoformat(timespec="seconds"),
          status, added, skipped, error),
     )
@@ -147,7 +158,8 @@ def write_log(cur, started, status, added, skipped, error=None):
 # --- Orchestration ---------------------------------------------------------
 def run():
     started = datetime.now().isoformat(timespec="seconds")
-    log.info("Initializing database...")
+    db_type = "Postgres" if is_postgres() else f"SQLite ({config.DB_PATH})"
+    log.info("Initializing database (%s)...", db_type)
     init_db()
 
     total_added = total_skipped = 0
@@ -156,7 +168,7 @@ def run():
     for ticker in config.TICKERS:
         log.info("Processing %s ...", ticker)
         try:
-            with db_cursor() as cur:               # one transaction per ticker
+            with db_cursor() as cur:
                 company_id = upsert_company(cur, ticker)
                 if company_id is None:
                     raise RuntimeError("could not resolve company_id")
@@ -180,7 +192,7 @@ def run():
     log.info("-" * 52)
     log.info("Done. status=%s  added=%d  skipped=%d  failed=%d",
              status, total_added, total_skipped, len(failures))
-    log.info("Database: %s", config.DB_PATH)
+    log.info("Database: %s", db_type)
 
 
 if __name__ == "__main__":

@@ -6,9 +6,10 @@ pandas>=2.0           # data wrangling
 streamlit>=1.30        # the web app
 plotly>=5.18           # interactive charts
 
+# Postgres
+psycopg2-binary>=2.9   # Postgres driver (used when DATABASE_URL is set)
+
 # Useful soon (uncomment as you grow)
 # requests>=2.31       # API calls / scraping
 # beautifulsoup4>=4.12 # HTML parsing for scraping fallback
-# python-dotenv>=1.0   # load API keys from .env
-# SQLAlchemy>=2.0      # ORM / cleaner DB code
-# psycopg2-binary>=2.9 # PostgreSQL driver (for deployment)
+# SQLAlchemy>=2.0      # ORM / cleaner DB code (consider for further scale)

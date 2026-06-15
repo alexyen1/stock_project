@@ -1,0 +1,29 @@
+name: Daily price ingestion
+
+on:
+  schedule:
+    # 5:30 PM ET on weekdays (21:30 UTC, ~1h after NYSE close).
+    # Note: clocks don't shift in UTC — this is 5:30 PM ET in summer, 4:30 PM in winter.
+    # Adjust to 22:30 UTC if you want 5:30 PM ET year-round.
+    - cron: '30 21 * * 1-5'
+  workflow_dispatch:   # lets you trigger a manual run from the GitHub Actions tab
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run ingestion
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m pipeline.ingest_prices

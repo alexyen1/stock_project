@@ -1,15 +1,15 @@
 # Secrets
 .env
 
-# Database
+# Database — Postgres is now the source of truth; keep the local SQLite out of git.
 data/*.db
 data/*.sqlite
-# ...but DO commit a snapshot so the deployed app (Streamlit Cloud) has data.
-!data/market_lens.db
-# Never commit SQLite's runtime journal/WAL files (regenerated on each run).
 data/*.db-journal
 data/*.db-wal
 data/*.db-shm
+
+# Streamlit local secrets — contains DATABASE_URL, never commit.
+.streamlit/secrets.toml
 
 # Python
 __pycache__/
