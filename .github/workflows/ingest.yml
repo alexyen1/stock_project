@@ -23,7 +23,12 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run ingestion
+      - name: Run price ingestion
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python -m pipeline.ingest_prices
+
+      - name: Run financials ingestion
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m pipeline.ingest_financials
