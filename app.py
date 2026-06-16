@@ -159,6 +159,29 @@ labels = [f"{r.ticker} — {r.name}" for r in matches.itertuples()]
 choice = st.sidebar.radio("Results", labels, label_visibility="collapsed")
 ticker = choice.split(" — ", 1)[0]
 
+# --- Add ticker ------------------------------------------------------------
+with st.sidebar.expander("➕ Add a ticker"):
+    with st.form("add_ticker_form", clear_on_submit=True):
+        new_ticker = st.text_input(
+            "Ticker symbol",
+            placeholder="e.g. SPY, BRK-B, VTI",
+            help="Stocks and ETFs both work. Use the exact symbol from Yahoo Finance.",
+        )
+        submitted = st.form_submit_button("Add", use_container_width=True)
+    if submitted and new_ticker.strip():
+        from pipeline.ingest_prices import ingest_ticker
+        with st.spinner(f"Fetching {new_ticker.upper().strip()}…"):
+            result = ingest_ticker(new_ticker)
+        if result["success"]:
+            st.sidebar.success(
+                f"Added **{result['name']}** ({result['ticker']}) "
+                f"— {result['prices_added']} price rows loaded."
+            )
+            st.cache_data.clear()
+            st.rerun()
+        else:
+            st.sidebar.error(result["error"])
+
 
 # --- Company header (always visible) ---------------------------------------
 company  = load_company(ticker)
@@ -194,7 +217,7 @@ else:
 
 
 # --- Tabs ------------------------------------------------------------------
-tab_price, tab_fundamentals = st.tabs(["📈 Price", "📊 Fundamentals"])
+tab_price, tab_fundamentals = st.tabs(["Price", "Fundamentals"])
 
 
 # ── Price tab ──────────────────────────────────────────────────────────────
@@ -236,14 +259,55 @@ with tab_fundamentals:
         if ratios:
             st.subheader("Key ratios (trailing twelve months)")
             r1, r2, r3, r4, r5, r6 = st.columns(6)
-            r1.metric("P/E ratio",      fmt_ratio(ratios.get("pe_ratio")))
-            r2.metric("Profit margin",  fmt_pct(ratios.get("profit_margin")))
-            r3.metric("ROE",            fmt_pct(ratios.get("roe")))
-            r4.metric("ROA",            fmt_pct(ratios.get("roa")))
+            r1.metric(
+                "P/E ratio", fmt_ratio(ratios.get("pe_ratio")),
+                help=(
+                    "Price-to-Earnings — how much investors pay for every $1 the company earns. "
+                    "A P/E of 20 means you're paying $20 for $1 of annual profit. "
+                    "Lower can mean cheaper; higher often reflects expectations of faster growth."
+                ),
+            )
+            r2.metric(
+                "Profit margin", fmt_pct(ratios.get("profit_margin")),
+                help=(
+                    "How many cents of profit the company keeps from every $1 of revenue. "
+                    "A 25% margin means $0.25 profit per $1 sold. Higher is generally better."
+                ),
+            )
+            r3.metric(
+                "ROE", fmt_pct(ratios.get("roe")),
+                help=(
+                    "Return on Equity — how much profit the company generates for every $1 "
+                    "shareholders have invested. A 15% ROE means $0.15 of profit per $1 of equity. "
+                    "Higher is better, but very high values can also signal heavy debt."
+                ),
+            )
+            r4.metric(
+                "ROA", fmt_pct(ratios.get("roa")),
+                help=(
+                    "Return on Assets — how efficiently the company uses everything it owns "
+                    "to generate profit. A 10% ROA means $0.10 of profit per $1 of assets. "
+                    "Useful for comparing companies in the same industry."
+                ),
+            )
             # yfinance returns debt_to_equity as a percentage (173 = 1.73×)
             de = ratios.get("debt_to_equity")
-            r5.metric("Debt / Equity",  fmt_ratio((de / 100) if de else None))
-            r6.metric("Current ratio",  fmt_ratio(ratios.get("current_ratio"), suffix=""))
+            r5.metric(
+                "Debt / Equity", fmt_ratio((de / 100) if de else None),
+                help=(
+                    "How much debt the company carries relative to what shareholders own. "
+                    "A ratio of 1.5× means $1.50 of debt for every $1 of equity. "
+                    "Higher means more financial risk, but some industries naturally carry more debt."
+                ),
+            )
+            r6.metric(
+                "Current ratio", fmt_ratio(ratios.get("current_ratio"), suffix=""),
+                help=(
+                    "Whether the company can pay its short-term bills. "
+                    "A ratio above 1.0 means it has more short-term assets than short-term debts — "
+                    "generally healthy. Below 1.0 can be a warning sign."
+                ),
+            )
             st.divider()
 
         # --- Revenue & Net Income chart ------------------------------------

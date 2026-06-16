@@ -155,6 +155,34 @@ def write_log(cur, started, status, added, skipped, error=None):
     )
 
 
+# --- Single-ticker ingestion (called from the web UI) ----------------------
+def ingest_ticker(ticker: str) -> dict:
+    """Ingest one ticker on demand — profile + 1y of prices.
+
+    Returns {"success": True, "name": ..., "prices_added": N}
+         or {"success": False, "error": "..."}.
+    """
+    ticker = ticker.upper().strip()
+    try:
+        init_db()
+        # Quick validation: yfinance sets quoteType for any real symbol.
+        info = yf.Ticker(ticker).info or {}
+        if not info.get("quoteType"):
+            return {
+                "success": False,
+                "error": f"'{ticker}' not recognised. Check the symbol and try again.",
+            }
+        with db_cursor() as cur:
+            company_id = upsert_company(cur, ticker)
+            if company_id is None:
+                return {"success": False, "error": f"Could not resolve company for '{ticker}'"}
+            added, _ = ingest_prices_for(cur, company_id, ticker)
+        name = info.get("longName") or info.get("shortName") or ticker
+        return {"success": True, "ticker": ticker, "name": name, "prices_added": added}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
 # --- Orchestration ---------------------------------------------------------
 def run():
     started = datetime.now().isoformat(timespec="seconds")
@@ -162,10 +190,19 @@ def run():
     log.info("Initializing database (%s)...", db_type)
     init_db()
 
+    # Merge config list with any tickers added dynamically via the web app.
+    try:
+        with db_cursor() as cur:
+            cur.execute("SELECT ticker FROM companies ORDER BY ticker")
+            db_tickers = [row["ticker"] for row in cur.fetchall()]
+    except Exception:
+        db_tickers = []
+    tickers = list(dict.fromkeys(config.TICKERS + db_tickers))
+
     total_added = total_skipped = 0
     failures = []
 
-    for ticker in config.TICKERS:
+    for ticker in tickers:
         log.info("Processing %s ...", ticker)
         try:
             with db_cursor() as cur:
@@ -182,7 +219,7 @@ def run():
         time.sleep(0.5)                            # be polite; avoid rate limits
 
     status = "success" if not failures else (
-        "failed" if len(failures) == len(config.TICKERS) else "partial"
+        "failed" if len(failures) == len(tickers) else "partial"
     )
     err = None if not failures else f"failed tickers: {', '.join(failures)}"
 
