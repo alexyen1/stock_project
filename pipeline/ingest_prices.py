@@ -177,8 +177,43 @@ def ingest_ticker(ticker: str) -> dict:
             if company_id is None:
                 return {"success": False, "error": f"Could not resolve company for '{ticker}'"}
             added, _ = ingest_prices_for(cur, company_id, ticker)
+
+        # Pull financials immediately so the Fundamentals tab is populated on add.
+        from pipeline.ingest_financials import upsert_ratios, upsert_statements
+        with db_cursor() as cur:
+            upsert_statements(cur, company_id, ticker)
+            upsert_ratios(cur, company_id, ticker)
+
         name = info.get("longName") or info.get("shortName") or ticker
         return {"success": True, "ticker": ticker, "name": name, "prices_added": added}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+# --- Single-ticker removal (called from the web UI) ------------------------
+def remove_ticker(ticker: str) -> dict:
+    """Delete a ticker and all its data from the database.
+
+    Returns {"success": True, "name": ...}
+         or {"success": False, "error": "..."}.
+    """
+    ticker = ticker.upper().strip()
+    try:
+        with db_cursor() as cur:
+            cur.execute(adapt_sql("SELECT company_id, name FROM companies WHERE ticker = ?"), (ticker,))
+            row = cur.fetchone()
+            if not row:
+                return {"success": False, "error": f"'{ticker}' is not in the database."}
+            company_id = row["company_id"]
+            name       = row["name"]
+
+            # Delete child rows in FK-safe order before removing the company.
+            for table in ("sentiment_scores", "watchlists", "financial_ratios",
+                          "financial_statements", "stock_prices", "news_articles"):
+                cur.execute(adapt_sql(f"DELETE FROM {table} WHERE company_id = ?"), (company_id,))
+            cur.execute(adapt_sql("DELETE FROM companies WHERE company_id = ?"), (company_id,))
+
+        return {"success": True, "ticker": ticker, "name": name}
     except Exception as exc:
         return {"success": False, "error": str(exc)}
 

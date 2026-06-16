@@ -182,6 +182,28 @@ with st.sidebar.expander("➕ Add a ticker"):
         else:
             st.sidebar.error(result["error"])
 
+# --- Remove ticker ---------------------------------------------------------
+with st.sidebar.expander("🗑️ Remove a ticker"):
+    ticker_to_remove = st.selectbox(
+        "Select ticker", companies["ticker"].tolist(), key="remove_select",
+    )
+    if ticker_to_remove in config.TICKERS:
+        st.warning(
+            "This is a default ticker — it will be re-added on the next scheduled run.",
+            icon="⚠️",
+        )
+    confirmed = st.checkbox("Delete all data for this ticker", key="remove_confirm")
+    if st.button("Remove", disabled=not confirmed, type="primary", key="remove_btn"):
+        from pipeline.ingest_prices import remove_ticker
+        with st.spinner(f"Removing {ticker_to_remove}…"):
+            result = remove_ticker(ticker_to_remove)
+        if result["success"]:
+            st.sidebar.success(f"Removed **{result['name']}** ({result['ticker']}).")
+            st.cache_data.clear()
+            st.rerun()
+        else:
+            st.sidebar.error(result["error"])
+
 
 # --- Company header (always visible) ---------------------------------------
 company  = load_company(ticker)
