@@ -179,13 +179,27 @@ def ingest_ticker(ticker: str) -> dict:
             added, _ = ingest_prices_for(cur, company_id, ticker)
 
         # Pull financials immediately so the Fundamentals tab is populated on add.
-        from pipeline.ingest_financials import upsert_ratios, upsert_statements
-        with db_cursor() as cur:
-            upsert_statements(cur, company_id, ticker)
-            upsert_ratios(cur, company_id, ticker)
+        # Run in a separate try-except: a financials failure shouldn't undo the add.
+        financials_ok = False
+        try:
+            from pipeline.ingest_financials import upsert_ratios, upsert_statements
+            with db_cursor() as cur:
+                upsert_statements(cur, company_id, ticker)
+                # Reuse the already-fetched info dict — avoids a second yfinance call
+                # that commonly fails due to rate limiting on rapid successive requests.
+                upsert_ratios(cur, company_id, ticker, info=info)
+            financials_ok = True
+        except Exception as fin_exc:
+            log.warning("  %s: financials ingestion failed: %s", ticker, fin_exc)
 
         name = info.get("longName") or info.get("shortName") or ticker
-        return {"success": True, "ticker": ticker, "name": name, "prices_added": added}
+        return {
+            "success": True,
+            "ticker": ticker,
+            "name": name,
+            "prices_added": added,
+            "financials_ok": financials_ok,
+        }
     except Exception as exc:
         return {"success": False, "error": str(exc)}
 

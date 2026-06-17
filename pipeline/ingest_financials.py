@@ -132,13 +132,17 @@ def upsert_statements(cur, company_id: int, ticker: str) -> int:
 
 # --- Ratios ----------------------------------------------------------------
 
-def upsert_ratios(cur, company_id: int, ticker: str) -> bool:
-    """Upsert trailing-twelve-month ratios from yfinance .info. Returns True on success."""
-    try:
-        info = yf.Ticker(ticker).info or {}
-    except Exception as exc:
-        log.warning("  %s: could not fetch info for ratios: %s", ticker, exc)
-        return False
+def upsert_ratios(cur, company_id: int, ticker: str, info: dict | None = None) -> bool:
+    """Upsert trailing-twelve-month ratios from yfinance .info. Returns True on success.
+
+    Pass a pre-fetched `info` dict to avoid a redundant yfinance network call.
+    """
+    if info is None:
+        try:
+            info = yf.Ticker(ticker).info or {}
+        except Exception as exc:
+            log.warning("  %s: could not fetch info for ratios: %s", ticker, exc)
+            info = {}
 
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
 

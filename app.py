@@ -173,10 +173,13 @@ with st.sidebar.expander("➕ Add a ticker"):
         with st.spinner(f"Fetching {new_ticker.upper().strip()}…"):
             result = ingest_ticker(new_ticker)
         if result["success"]:
-            st.sidebar.success(
+            msg = (
                 f"Added **{result['name']}** ({result['ticker']}) "
                 f"— {result['prices_added']} price rows loaded."
             )
+            if not result.get("financials_ok"):
+                msg += " Financials will appear after the next scheduled run."
+            st.sidebar.success(msg)
             st.cache_data.clear()
             st.rerun()
         else:
@@ -198,11 +201,15 @@ with st.sidebar.expander("🗑️ Remove a ticker"):
         with st.spinner(f"Removing {ticker_to_remove}…"):
             result = remove_ticker(ticker_to_remove)
         if result["success"]:
+            st.session_state.pop("remove_error", None)
             st.sidebar.success(f"Removed **{result['name']}** ({result['ticker']}).")
             st.cache_data.clear()
             st.rerun()
         else:
-            st.sidebar.error(result["error"])
+            st.session_state["remove_error"] = result["error"]
+    # Show persisted error outside the button block so it survives reruns.
+    if "remove_error" in st.session_state:
+        st.error(st.session_state["remove_error"])
 
 
 # --- Company header (always visible) ---------------------------------------
