@@ -42,6 +42,15 @@ def load_financials(ticker: str) -> pd.DataFrame:
 def load_ratios(ticker: str) -> dict | None:
     return get_ratios(ticker)
 
+@st.cache_data(ttl=600)
+def load_etf_info(ticker: str) -> dict:
+    """Fetch ETF metadata directly from yfinance (cached 10 min)."""
+    import yfinance as yf
+    try:
+        return yf.Ticker(ticker).info or {}
+    except Exception:
+        return {}
+
 
 # --- Formatting helpers ----------------------------------------------------
 def fmt_currency(value, suffix="") -> str:
@@ -278,101 +287,176 @@ with tab_price:
 
 # ── Fundamentals tab ───────────────────────────────────────────────────────
 with tab_fundamentals:
-    if ratios is None and fin_df.empty:
-        st.info(
-            "No financial data yet. Run the ingestion job first:\n\n"
-            "```\npython -m pipeline.ingest_financials\n```"
+    quote_type = (company.get("quote_type") or "").upper()
+
+    # ── ETF / mutual-fund view ─────────────────────────────────────────────
+    if quote_type in ("ETF", "MUTUALFUND"):
+        etf = load_etf_info(ticker)
+
+        st.subheader("Fund overview")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric(
+            "Assets (AUM)", fmt_currency(etf.get("totalAssets")),
+            help="Total assets under management — the total amount of money invested in this fund.",
         )
+        expense = etf.get("annualReportExpenseRatio") or etf.get("expenseRatio")
+        c2.metric(
+            "Expense ratio", fmt_pct(expense),
+            help=(
+                "The annual fee charged by the fund, as a percentage of your investment. "
+                "Most index ETFs charge 0.03%–0.20%; actively managed funds charge more."
+            ),
+        )
+        div_yield = etf.get("yield") or etf.get("trailingAnnualDividendYield")
+        c3.metric(
+            "Dividend yield", fmt_pct(div_yield),
+            help="Annual distributions (dividends) paid out to investors, as a % of the current price.",
+        )
+        c4.metric(
+            "Category", etf.get("category") or "—",
+            help="The fund's investment style, e.g. 'Large Blend', 'Short-Term Bond'.",
+        )
+
+        st.subheader("Performance")
+        p1, p2, p3 = st.columns(3)
+        p1.metric(
+            "YTD return", fmt_pct(etf.get("ytdReturn")),
+            help="How much the fund has returned since January 1 of the current year.",
+        )
+        p2.metric(
+            "3-year avg return", fmt_pct(etf.get("threeYearAverageReturn")),
+            help="Average annual return over the past 3 years.",
+        )
+        p3.metric(
+            "5-year avg return", fmt_pct(etf.get("fiveYearAverageReturn")),
+            help="Average annual return over the past 5 years.",
+        )
+
+        st.subheader("Risk & valuation")
+        v1, v2, v3 = st.columns(3)
+        beta = etf.get("beta3Year") or etf.get("beta")
+        v1.metric(
+            "Beta (3Y)", fmt_ratio(beta, suffix=""),
+            help=(
+                "How much the fund moves relative to the broader market. "
+                "1.0 = moves in line with the market. "
+                "Above 1.0 = more volatile; below 1.0 = more stable."
+            ),
+        )
+        v2.metric(
+            "P/E (holdings)", fmt_ratio(etf.get("trailingPE")),
+            help=(
+                "The weighted-average Price-to-Earnings ratio of all stocks inside this fund. "
+                "A rough sense of how expensively the fund's holdings are priced relative to their earnings."
+            ),
+        )
+        v3.metric(
+            "Number of holdings", str(etf.get("holdings_count") or etf.get("numberOfHoldings") or "—"),
+            help="How many individual securities the fund holds.",
+        )
+
+        fund_desc = etf.get("longBusinessSummary")
+        if fund_desc:
+            with st.expander("About this fund"):
+                st.write(fund_desc)
+
+    # ── Stock view ─────────────────────────────────────────────────────────
     else:
-        # --- TTM ratio grid ------------------------------------------------
-        if ratios:
-            st.subheader("Key ratios (trailing twelve months)")
-            r1, r2, r3, r4, r5, r6 = st.columns(6)
-            r1.metric(
-                "P/E ratio", fmt_ratio(ratios.get("pe_ratio")),
-                help=(
-                    "Price-to-Earnings — how much investors pay for every $1 the company earns. "
-                    "A P/E of 20 means you're paying $20 for $1 of annual profit. "
-                    "Lower can mean cheaper; higher often reflects expectations of faster growth."
-                ),
+        if ratios is None and fin_df.empty:
+            st.info(
+                "No financial data yet. Run the ingestion job first:\n\n"
+                "```\npython -m pipeline.ingest_financials\n```"
             )
-            r2.metric(
-                "Profit margin", fmt_pct(ratios.get("profit_margin")),
-                help=(
-                    "How many cents of profit the company keeps from every $1 of revenue. "
-                    "A 25% margin means $0.25 profit per $1 sold. Higher is generally better."
-                ),
-            )
-            r3.metric(
-                "ROE", fmt_pct(ratios.get("roe")),
-                help=(
-                    "Return on Equity — how much profit the company generates for every $1 "
-                    "shareholders have invested. A 15% ROE means $0.15 of profit per $1 of equity. "
-                    "Higher is better, but very high values can also signal heavy debt."
-                ),
-            )
-            r4.metric(
-                "ROA", fmt_pct(ratios.get("roa")),
-                help=(
-                    "Return on Assets — how efficiently the company uses everything it owns "
-                    "to generate profit. A 10% ROA means $0.10 of profit per $1 of assets. "
-                    "Useful for comparing companies in the same industry."
-                ),
-            )
-            # yfinance returns debt_to_equity as a percentage (173 = 1.73×)
-            de = ratios.get("debt_to_equity")
-            r5.metric(
-                "Debt / Equity", fmt_ratio((de / 100) if de else None),
-                help=(
-                    "How much debt the company carries relative to what shareholders own. "
-                    "A ratio of 1.5× means $1.50 of debt for every $1 of equity. "
-                    "Higher means more financial risk, but some industries naturally carry more debt."
-                ),
-            )
-            r6.metric(
-                "Current ratio", fmt_ratio(ratios.get("current_ratio"), suffix=""),
-                help=(
-                    "Whether the company can pay its short-term bills. "
-                    "A ratio above 1.0 means it has more short-term assets than short-term debts — "
-                    "generally healthy. Below 1.0 can be a warning sign."
-                ),
-            )
-            st.divider()
+        else:
+            # --- TTM ratio grid --------------------------------------------
+            if ratios:
+                st.subheader("Key ratios (trailing twelve months)")
+                r1, r2, r3, r4, r5, r6 = st.columns(6)
+                r1.metric(
+                    "P/E ratio", fmt_ratio(ratios.get("pe_ratio")),
+                    help=(
+                        "Price-to-Earnings — how much investors pay for every $1 the company earns. "
+                        "A P/E of 20 means you're paying $20 for $1 of annual profit. "
+                        "Lower can mean cheaper; higher often reflects expectations of faster growth."
+                    ),
+                )
+                r2.metric(
+                    "Profit margin", fmt_pct(ratios.get("profit_margin")),
+                    help=(
+                        "How many cents of profit the company keeps from every $1 of revenue. "
+                        "A 25% margin means $0.25 profit per $1 sold. Higher is generally better."
+                    ),
+                )
+                r3.metric(
+                    "ROE", fmt_pct(ratios.get("roe")),
+                    help=(
+                        "Return on Equity — how much profit the company generates for every $1 "
+                        "shareholders have invested. A 15% ROE means $0.15 of profit per $1 of equity. "
+                        "Higher is better, but very high values can also signal heavy debt."
+                    ),
+                )
+                r4.metric(
+                    "ROA", fmt_pct(ratios.get("roa")),
+                    help=(
+                        "Return on Assets — how efficiently the company uses everything it owns "
+                        "to generate profit. A 10% ROA means $0.10 of profit per $1 of assets. "
+                        "Useful for comparing companies in the same industry."
+                    ),
+                )
+                # yfinance returns debt_to_equity as a percentage (173 = 1.73×)
+                de = ratios.get("debt_to_equity")
+                r5.metric(
+                    "Debt / Equity", fmt_ratio((de / 100) if de else None),
+                    help=(
+                        "How much debt the company carries relative to what shareholders own. "
+                        "A ratio of 1.5× means $1.50 of debt for every $1 of equity. "
+                        "Higher means more financial risk, but some industries naturally carry more debt."
+                    ),
+                )
+                r6.metric(
+                    "Current ratio", fmt_ratio(ratios.get("current_ratio"), suffix=""),
+                    help=(
+                        "Whether the company can pay its short-term bills. "
+                        "A ratio above 1.0 means it has more short-term assets than short-term debts — "
+                        "generally healthy. Below 1.0 can be a warning sign."
+                    ),
+                )
+                st.divider()
 
-        # --- Revenue & Net Income chart ------------------------------------
-        if not fin_df.empty:
-            st.subheader("Quarterly revenue & net income")
-            chart_df = fin_df.dropna(subset=["revenue", "net_income"])
-            if not chart_df.empty:
-                st.plotly_chart(financials_chart(chart_df), width="stretch")
+            # --- Revenue & Net Income chart --------------------------------
+            if not fin_df.empty:
+                st.subheader("Quarterly revenue & net income")
+                chart_df = fin_df.dropna(subset=["revenue", "net_income"])
+                if not chart_df.empty:
+                    st.plotly_chart(financials_chart(chart_df), width="stretch")
 
-            # --- EPS & cash flow metrics -----------------------------------
-            st.subheader("Per-quarter snapshot")
-            e1, e2, e3 = st.columns(3)
-            latest_q = fin_df.iloc[0]
-            e1.metric("EPS (latest quarter)",
-                      f"${latest_q['eps']:.2f}" if pd.notna(latest_q.get("eps")) else "—")
-            e2.metric("Operating cash flow",
-                      fmt_currency(latest_q.get("operating_cash_flow")))
-            e3.metric("Total equity",
-                      fmt_currency(latest_q.get("total_equity")))
-            st.divider()
+                # --- EPS & cash flow metrics -------------------------------
+                st.subheader("Per-quarter snapshot")
+                e1, e2, e3 = st.columns(3)
+                latest_q = fin_df.iloc[0]
+                e1.metric("EPS (latest quarter)",
+                          f"${latest_q['eps']:.2f}" if pd.notna(latest_q.get("eps")) else "—")
+                e2.metric("Operating cash flow",
+                          fmt_currency(latest_q.get("operating_cash_flow")))
+                e3.metric("Total equity",
+                          fmt_currency(latest_q.get("total_equity")))
+                st.divider()
 
-            # --- Quarterly table -------------------------------------------
-            with st.expander("Full quarterly breakdown"):
-                display = fin_df.copy()
-                for col in ["revenue", "gross_profit", "operating_income",
-                            "net_income", "total_assets", "total_liabilities",
-                            "total_equity", "operating_cash_flow"]:
-                    if col in display.columns:
-                        display[col] = display[col].apply(
-                            lambda v: fmt_currency(v) if pd.notna(v) else "—"
+                # --- Quarterly table ---------------------------------------
+                with st.expander("Full quarterly breakdown"):
+                    display = fin_df.copy()
+                    for col in ["revenue", "gross_profit", "operating_income",
+                                "net_income", "total_assets", "total_liabilities",
+                                "total_equity", "operating_cash_flow"]:
+                        if col in display.columns:
+                            display[col] = display[col].apply(
+                                lambda v: fmt_currency(v) if pd.notna(v) else "—"
+                            )
+                    if "eps" in display.columns:
+                        display["eps"] = display["eps"].apply(
+                            lambda v: f"${v:.2f}" if pd.notna(v) else "—"
                         )
-                if "eps" in display.columns:
-                    display["eps"] = display["eps"].apply(
-                        lambda v: f"${v:.2f}" if pd.notna(v) else "—"
-                    )
-                st.dataframe(display, width="stretch", hide_index=True)
+                    st.dataframe(display, width="stretch", hide_index=True)
 
 st.sidebar.caption(
     f"Tracking {len(companies)} companies · DB: {config.DB_PATH.name}"

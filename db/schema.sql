@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS companies (
     description  TEXT,
     market_cap   INTEGER,
     website      TEXT,
+    quote_type   TEXT,
     created_at   TEXT DEFAULT (datetime('now')),     -- Postgres: TIMESTAMPTZ DEFAULT now()
     updated_at   TEXT DEFAULT (datetime('now'))
 );

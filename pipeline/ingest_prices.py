@@ -45,8 +45,8 @@ def upsert_company(cur, ticker: str) -> int | None:
         adapt_sql("""
         INSERT INTO companies
             (ticker, name, sector, industry, exchange, country,
-             description, market_cap, website, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             description, market_cap, website, quote_type, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(ticker) DO UPDATE SET
             name        = excluded.name,
             sector      = excluded.sector,
@@ -56,6 +56,7 @@ def upsert_company(cur, ticker: str) -> int | None:
             description = excluded.description,
             market_cap  = excluded.market_cap,
             website     = excluded.website,
+            quote_type  = excluded.quote_type,
             updated_at  = excluded.updated_at
         """),
         (
@@ -68,6 +69,7 @@ def upsert_company(cur, ticker: str) -> int | None:
             info.get("longBusinessSummary"),
             info.get("marketCap"),
             info.get("website"),
+            info.get("quoteType"),
             now,
         ),
     )

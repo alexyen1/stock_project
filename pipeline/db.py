@@ -46,6 +46,29 @@ def db_cursor():
         conn.close()
 
 
+def _run_migrations(conn) -> None:
+    """Additive column migrations — safe to run against any existing database."""
+    if is_postgres():
+        with conn.cursor() as cur:
+            for sql in [
+                "ALTER TABLE companies ADD COLUMN IF NOT EXISTS quote_type TEXT",
+            ]:
+                try:
+                    cur.execute(sql)
+                except Exception:
+                    pass
+        conn.commit()
+    else:
+        for sql in [
+            "ALTER TABLE companies ADD COLUMN quote_type TEXT",
+        ]:
+            try:
+                conn.execute(sql)
+                conn.commit()
+            except Exception:
+                pass
+
+
 def init_db():
     """Create all tables from the appropriate schema file (idempotent)."""
     if is_postgres():
@@ -56,6 +79,7 @@ def init_db():
             with conn.cursor() as cur:
                 cur.execute(schema_sql)
             conn.commit()
+            _run_migrations(conn)
         finally:
             conn.close()
     else:
@@ -65,5 +89,6 @@ def init_db():
         try:
             conn.executescript(schema_sql)
             conn.commit()
+            _run_migrations(conn)
         finally:
             conn.close()

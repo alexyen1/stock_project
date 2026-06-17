@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS companies (
     description  TEXT,
     market_cap   BIGINT,
     website      TEXT,
+    quote_type   TEXT,
     created_at   TIMESTAMPTZ DEFAULT NOW(),
     updated_at   TIMESTAMPTZ DEFAULT NOW()
 );
