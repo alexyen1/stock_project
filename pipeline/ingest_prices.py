@@ -224,7 +224,7 @@ def remove_ticker(ticker: str) -> dict:
             name       = row["name"]
 
             # Delete child rows in FK-safe order before removing the company.
-            for table in ("sentiment_scores", "watchlists", "financial_ratios",
+            for table in ("sentiment_scores", "watchlists", "alerts", "financial_ratios",
                           "financial_statements", "stock_prices", "news_articles"):
                 cur.execute(adapt_sql(f"DELETE FROM {table} WHERE company_id = ?"), (company_id,))
             cur.execute(adapt_sql("DELETE FROM companies WHERE company_id = ?"), (company_id,))

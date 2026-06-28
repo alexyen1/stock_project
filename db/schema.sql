@@ -118,6 +118,19 @@ CREATE TABLE IF NOT EXISTS sentiment_scores (
 );
 
 -- ---------------------------------------------------------------------------
+-- alerts: user-defined price thresholds, evaluated live in the app
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS alerts (
+    alert_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id      INTEGER NOT NULL,
+    direction       TEXT NOT NULL,                     -- above | below
+    threshold_price REAL NOT NULL,
+    created_at      TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (company_id) REFERENCES companies (company_id)
+);
+CREATE INDEX IF NOT EXISTS idx_alerts_company ON alerts (company_id);
+
+-- ---------------------------------------------------------------------------
 -- users + watchlists: account features (added Week 9)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS users (

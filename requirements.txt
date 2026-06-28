@@ -9,7 +9,9 @@ plotly>=5.18           # interactive charts
 # Postgres
 psycopg2-binary>=2.9   # Postgres driver (used when DATABASE_URL is set)
 
+# News
+requests>=2.31        # Google News RSS fetch
+
 # Useful soon (uncomment as you grow)
-# requests>=2.31       # API calls / scraping
 # beautifulsoup4>=4.12 # HTML parsing for scraping fallback
 # SQLAlchemy>=2.0      # ORM / cleaner DB code (consider for further scale)

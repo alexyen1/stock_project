@@ -14,11 +14,20 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 import config
+from pipeline.alerts import create_alert, delete_alert, list_alerts, triggered_alerts
 from pipeline.queries import (
     get_company, get_financials, get_prices, get_ratios, list_companies,
 )
 
 st.set_page_config(page_title="Market Lens", page_icon="📈", layout="wide")
+
+
+@st.cache_resource
+def ensure_schema() -> None:
+    from pipeline.db import init_db
+    init_db()
+
+ensure_schema()
 
 
 # --- Cached data access ----------------------------------------------------
@@ -50,6 +59,11 @@ def load_etf_info(ticker: str) -> dict:
         return yf.Ticker(ticker).info or {}
     except Exception:
         return {}
+
+@st.cache_data(ttl=900)
+def load_news(ticker: str, company_name: str | None) -> list[dict]:
+    from pipeline.news import get_news
+    return get_news(ticker, company_name)
 
 
 # --- Formatting helpers ----------------------------------------------------
@@ -151,7 +165,7 @@ companies = load_companies()
 st.sidebar.title("Market Analysis")
 
 query = st.sidebar.text_input(
-    "Search ticker or company", placeholder="e.g. AAPL or Apple"
+    "🔍 Search ticker or company", label_visibility="collapsed"
 )
 matches = companies[
     companies["ticker"].str.contains(query, case=False, na=False)
@@ -173,7 +187,7 @@ with st.sidebar.expander("➕ Add a ticker"):
     with st.form("add_ticker_form", clear_on_submit=True):
         new_ticker = st.text_input(
             "Ticker symbol",
-            placeholder="e.g. SPY, BRK-B, VTI",
+            label_visibility="collapsed",
             help="Stocks and ETFs both work. Use the exact symbol from Yahoo Finance.",
         )
         submitted = st.form_submit_button("Add", use_container_width=True)
@@ -198,6 +212,7 @@ with st.sidebar.expander("➕ Add a ticker"):
 with st.sidebar.expander("🗑️ Remove a ticker"):
     ticker_to_remove = st.selectbox(
         "Select ticker", companies["ticker"].tolist(), key="remove_select",
+        label_visibility="collapsed",
     )
     if ticker_to_remove in config.TICKERS:
         st.warning(
@@ -219,6 +234,33 @@ with st.sidebar.expander("🗑️ Remove a ticker"):
     # Show persisted error outside the button block so it survives reruns.
     if "remove_error" in st.session_state:
         st.error(st.session_state["remove_error"])
+
+# --- Price alerts ------------------------------------------------------------
+with st.sidebar.expander(f"🔔 Alerts for {ticker}"):
+    existing_alerts = list_alerts(ticker)
+    if existing_alerts:
+        for a in existing_alerts:
+            col1, col2 = st.columns([4, 1])
+            col1.write(f"{a['direction'].capitalize()} ${a['threshold_price']:,.2f}")
+            if col2.button("✕", key=f"del_alert_{a['alert_id']}"):
+                delete_alert(a["alert_id"])
+                st.rerun()
+    else:
+        st.caption("No alerts set for this ticker yet.")
+
+    with st.form(f"add_alert_form_{ticker}", clear_on_submit=True):
+        d1, d2 = st.columns(2)
+        direction = d1.selectbox("Direction", ["above", "below"], label_visibility="collapsed")
+        threshold = d2.number_input(
+            "Threshold price ($)", min_value=0.0, step=1.0, label_visibility="collapsed",
+        )
+        alert_submitted = st.form_submit_button("Set alert", use_container_width=True)
+    if alert_submitted:
+        alert_result = create_alert(ticker, direction, threshold)
+        if alert_result["success"]:
+            st.rerun()
+        else:
+            st.error(alert_result["error"])
 
 
 # --- Company header (always visible) ---------------------------------------
@@ -250,12 +292,20 @@ if not prices.empty:
     st.caption(
         f"As of {latest['date'].date()} · {len(prices):,} trading days on file"
     )
+
+    for hit in triggered_alerts(list_alerts(ticker), latest["close"]):
+        cmp_symbol = "≥" if hit["direction"] == "above" else "≤"
+        st.warning(
+            f"🔔 {ticker} closed at ${latest['close']:,.2f} — {cmp_symbol} your "
+            f"${hit['threshold_price']:,.2f} alert threshold.",
+            icon="🔔",
+        )
 else:
     st.warning("No price data on file for this ticker yet. Run the ingestion pipeline.")
 
 
 # --- Tabs ------------------------------------------------------------------
-tab_price, tab_fundamentals = st.tabs(["Price", "Fundamentals"])
+tab_price, tab_fundamentals, tab_news = st.tabs(["Price", "Fundamentals", "News"])
 
 
 # ── Price tab ──────────────────────────────────────────────────────────────
@@ -457,6 +507,23 @@ with tab_fundamentals:
                             lambda v: f"${v:.2f}" if pd.notna(v) else "—"
                         )
                     st.dataframe(display, width="stretch", hide_index=True)
+
+
+# ── News tab ────────────────────────────────────────────────────────────────
+with tab_news:
+    with st.spinner("Loading news…"):
+        articles = load_news(ticker, company.get("name"))
+
+    if not articles:
+        st.info("No recent news found for this ticker.")
+    else:
+        for art in articles:
+            when = art["published_at"].strftime("%b %d, %Y") if art["published_at"] else ""
+            st.markdown(f"**[{art['headline']}]({art['url']})**")
+            st.caption(" · ".join(p for p in (art["source"], when) if p))
+            if art["summary"]:
+                st.write(art["summary"])
+            st.divider()
 
 st.sidebar.caption(
     f"Tracking {len(companies)} companies · DB: {config.DB_PATH.name}"
